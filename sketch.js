@@ -15,6 +15,9 @@ let animationLength;
 let currentFrame;
 let spawnDelay = 0;
 
+let port, writer, reader, connected;
+let poten;
+
 //loads sprite sheet and font
 function preload() {
   bugSheet = loadImage("assets/bugs.png");
@@ -31,15 +34,32 @@ function setup() {
   }
   deathFrame = (bugSheet.get(32*4, 0, 32, 20));
   textFont(gameFont);
+
+  //button to connect to port
+  if ("serial" in navigator) {
+    connectButton = createButton("Connect");
+    connectButton.position(20, 80);
+    connectButton.mousePressed(connect);
+  }
 }
 
 //runs game
 function draw() {
   background(color('white'));
 
+  //if not connected to the arduino, break
+  if (!connected) return;
+
   if (gameOver) {
     gameDone();
   } else {
+    //read arduino stream
+    readData();
+
+    //draw crosshair
+    fill(0);
+    ellipse(width/2, poten, 20, 20);
+    
     textSize(16);
     text("Score: " + score, 20, 20);
     text("Time: " + ceil(timeRemaining), width-150,20);
@@ -67,6 +87,15 @@ function draw() {
 
 }
 
+//connects arduino and js
+async function connect() {
+  port = await navigator.serial.requestPort();
+  await port.open({ baudRate: 9600 });
+
+  writer = port.writable.getWriter();
+  connected = 1;
+}
+
 //game is finished
 function gameDone() {
   text("Time's Up!", 100, 100);
@@ -74,12 +103,45 @@ function gameDone() {
 }
 
 //check if a click hit
-function mouseClicked() {
+function buttonPressed() {
   if (!gameOver) {
     for (let bug of bugs) {
       bug.isBugDead();
     }
   }
+}
+
+async function readData() {
+  //while we can read the port's stream
+  while (port.readable) {
+    //obtain a reader
+    const reader = port.readable.getReader();
+    try {
+      while (true) {
+        //read incoming data
+        const { value, done } = await reader.read();
+        if (done) {
+          // |reader| has been canceled.
+          break;
+        }
+        //split button and poten readings
+        let val = String(value).split(',');
+
+        //if button was pressed, check for kills
+        if (val[1]) {
+          buttonPressed();
+        }
+
+        //move crosshair/cursor on the y axis
+        poten = map(float(val[0]), 0, 1023, 0, height, 1);
+
+      }
+    } catch (error) {
+      console.error(err);
+    } finally {
+      reader.releaseLock();
+    }
+  }  
 }
 
 //bug
@@ -129,7 +191,7 @@ class Bug {
   calculateWalk() {
     if (!this.bugDead && !gameOver) {
       this.x += 1 * speed;
-      }
+    }
   }
 
   //check if bug has died
@@ -139,11 +201,13 @@ class Bug {
         this.bugDead = true;
         score++;
         speed += 1.00005;
+        writer.write(stringToArrayBuffer("1"));
     } else if (this.facingLeft && !this.bugDead && mouseX < abs(this.x) && mouseX > this.x - this.spriteWidth && 
                mouseY > this.y && mouseY < this.y + 20) {
         this.bugDead = true;
         score++;
         speed += 1.00005;
+        writer.write(stringToArrayBuffer("1"));
       }
 
   }
